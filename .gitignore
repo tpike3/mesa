@@ -96,3 +96,16 @@ mesa/visualization/templates/js/external/
 
 # Vale styles (downloaded via vale sync)
 .github/styles/Google/
+
+# AI/LLM instruction files
+.github/copilot-instructions*.md
+**/copilot-instructions*.md
+**/AGENT.md
+**/AGENTS.md
+**/CLAUDE.md
+**/.cursorrules
+**/.windsurfrules
+**/.clinerules
+**/.cursor/rules/
+**/.windsurf/rules/
+**/.clinerules/
