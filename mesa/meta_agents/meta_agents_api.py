@@ -78,39 +78,80 @@ class MetaAgents:
         self.backend = backend or MembershipBackend()
         model.meta_agents = self
 
+        # Cached mapping from backend entity ids to live model objects.
+        # Populated incrementally by mutation methods; seeded once on first
+        # access via _ensure_cache() for pre-existing backend state.
+        self._id_to_entity: dict[Hashable, Any] = {}
+        self._cache_seeded: bool = False
+
         self.model._register_agent_removed_hook(self._on_agent_removed)
 
     def _on_agent_removed(self, agent) -> None:
         """Deactivate memberships when a live agent leaves the model."""
         self.deactivate(agent)
+        entity_id = self._entity_id(agent)
+        self._id_to_entity.pop(entity_id, None)
 
     def _entity_id(self, entity: Hashable) -> Hashable:
         """Return the backend identity for a live entity or hashable external id."""
         return getattr(entity, "unique_id", entity)
 
-    def _live_entity_lookup(self) -> dict[Hashable, Any]:
-        """Build a lookup from backend ids back to live model objects."""
-        # TODO(perf): This rebuilds an O(N) mapping over every model agent on
-        # each call. Cache the lookup instead and only rebuild it on agent add
-        # or remove calls (e.g. via the model's agent lifecycle hooks, seeding
-        # once in ``__init__``). Future optimization: bulk adds and removes.
-        lookup: dict[Hashable, Any] = {}
+    def _cache_entity(self, entity: Any) -> None:
+        """Store a live entity in the id-to-object cache."""
+        entity_id = getattr(entity, "unique_id", None)
+        if entity_id is not None:
+            self._id_to_entity[entity_id] = entity
+
+    def _ensure_cache(self) -> None:
+        """One-time seed of the cache for any pre-existing backend state.
+
+        Only scans the model agents whose ids are already known to the
+        backend, making this O(N_model) once rather than on every call.
+        After the seed, all future entries come from mutation methods.
+        """
+        if self._cache_seeded:
+            return
+        self._cache_seeded = True
+        needed = self.backend.all_entity_ids() - self._id_to_entity.keys()
+        if not needed:
+            return
         for entity in self.model.agents:
             entity_id = getattr(entity, "unique_id", None)
-            if entity_id is not None:
-                lookup[entity_id] = entity
-        return lookup
+            if entity_id is not None and entity_id in needed:
+                self._id_to_entity[entity_id] = entity
+                needed.discard(entity_id)
+                if not needed:
+                    break
+
+    def _resolve_id(self, entity_id: Hashable) -> Any:
+        """Look up a cached entity, falling back to a model scan on miss.
+
+        On a cache miss the model agents are scanned for the specific id.
+        The result is cached so subsequent lookups are O(1).
+        Returns the raw *entity_id* when no live object is found.
+        """
+        self._ensure_cache()
+        hit = self._id_to_entity.get(entity_id)
+        if hit is not None:
+            return hit
+        # Fallback: scan model agents for this specific id.
+        for entity in self.model.agents:
+            eid = getattr(entity, "unique_id", None)
+            if eid == entity_id:
+                self._id_to_entity[eid] = entity
+                return entity
+        return entity_id
 
     def _resolve_entity(self, entity_id: Hashable) -> Any:
         """Resolve a backend id back to a live object when possible."""
-        return self._live_entity_lookup().get(entity_id, entity_id)
+        return self._resolve_id(entity_id)
 
     def _resolve_group(self, group: Hashable) -> Any:
         """Resolve a group from a live object, unique id, or group name."""
-        lookup = self._live_entity_lookup()
+        self._ensure_cache()
         entity_id = self._entity_id(group)
-        if entity_id in lookup:
-            return lookup[entity_id]
+        if entity_id in self._id_to_entity:
+            return self._id_to_entity[entity_id]
         if isinstance(group, str):
             matches = list(
                 dict.fromkeys(
@@ -131,7 +172,8 @@ class MetaAgents:
         self, entity: Hashable, triplets: Iterable[Triplet]
     ) -> MembershipView:
         """Convert backend triplets into a user-facing snapshot."""
-        lookup = self._live_entity_lookup()
+        self._ensure_cache()
+        cache = self._id_to_entity
         resolved_edges: list[MembershipEdge] = []
         for agent_id, group_id, relation in sorted(
             triplets,
@@ -143,8 +185,8 @@ class MetaAgents:
         ):
             resolved_edges.append(
                 MembershipEdge(
-                    agent=lookup.get(agent_id, agent_id),
-                    group=lookup.get(group_id, group_id),
+                    agent=cache.get(agent_id, agent_id),
+                    group=cache.get(group_id, group_id),
                     relation=relation,
                 )
             )
@@ -265,6 +307,11 @@ class MetaAgents:
             [(member, meta_agent, rel) for member, rel in member_relations]
         )
 
+        # Cache all entities involved so future lookups are O(1).
+        self._cache_entity(meta_agent)
+        for member, _rel in member_relations:
+            self._cache_entity(member)
+
         return meta_agent
 
     def add_member(
@@ -274,11 +321,12 @@ class MetaAgents:
         relation: RelationKey = "member",
     ) -> MembershipView:
         """Add one member to one group."""
-        lookup = self._live_entity_lookup()
-        member = lookup.get(self._entity_id(member), member)
+        member = self._resolve_id(self._entity_id(member))
         group = self._resolve_group(group)
 
         self.backend.add_membership(member, group, relation)
+        self._cache_entity(member)
+        self._cache_entity(group)
         return self.query_memberships(member)
 
     def remove_member(
@@ -288,8 +336,7 @@ class MetaAgents:
         relation: RelationKey = "member",
     ) -> MembershipView:
         """Remove one member from one group."""
-        lookup = self._live_entity_lookup()
-        member = lookup.get(self._entity_id(member), member)
+        member = self._resolve_id(self._entity_id(member))
         group = self._resolve_group(group)
 
         self.backend.remove_membership(member, group, relation)
@@ -300,13 +347,14 @@ class MetaAgents:
     ) -> AgentSet:
         """Return the live members of one group as an AgentSet."""
         group = self._resolve_group(group)
-        lookup = self._live_entity_lookup()
+        self._ensure_cache()
+        cache = self._id_to_entity
         members = [
-            lookup[member_id]
+            cache[member_id]
             for member_id in sorted(
                 self.backend.agents_of(group, relation=relation), key=str
             )
-            if member_id in lookup
+            if member_id in cache
         ]
         return AgentSet(members, random=self.model.random)
 
@@ -314,13 +362,14 @@ class MetaAgents:
         self, agent: Hashable, relation: RelationKey | None = None
     ) -> AgentSet:
         """Return the live groups that contain one agent as an AgentSet."""
-        lookup = self._live_entity_lookup()
+        self._ensure_cache()
+        cache = self._id_to_entity
         groups = [
-            lookup[group_id]
+            cache[group_id]
             for group_id in sorted(
                 self.backend.groups_of(agent, relation=relation), key=str
             )
-            if group_id in lookup
+            if group_id in cache
         ]
         return AgentSet(groups, random=self.model.random)
 
@@ -329,12 +378,7 @@ class MetaAgents:
     ) -> MembershipView:
         """Return a resolved, read-only snapshot of one entity's memberships."""
         entity_id = self._entity_id(entity)
-        triplets = (
-            triplet
-            for triplet in self.backend.as_triplets()
-            if (triplet[0] == entity_id or triplet[1] == entity_id)
-            and (relation is None or triplet[2] == relation)
-        )
+        triplets = self.backend.triplets_for(entity_id, relation)
         return self._resolve_view(entity_id, triplets)
 
     def dissolve(self, entity: Hashable) -> MembershipView:
@@ -392,13 +436,16 @@ class MetaAgents:
         if level < 0:
             raise ValueError(f"level must be non-negative, got {level}")
 
-        lookup = self._live_entity_lookup()
+        self._ensure_cache()
+        cache = self._id_to_entity
         root_id = self._entity_id(root)
-        if root_id not in lookup:
+        # Ensure root is cached even when it has no memberships.
+        root_obj = self._resolve_id(root_id)
+        if root_obj is root_id:
             raise ValueError(f"root {root!r} is not registered in the model")
 
         if level == 0:
-            return AgentSet([lookup[root_id]], random=self.model.random)
+            return AgentSet([cache[root_id]], random=self.model.random)
 
         # BFS downward: group -> members. First visit is nearest depth.
         visited: set[Hashable] = {root_id}
@@ -419,7 +466,7 @@ class MetaAgents:
                 visited.add(member_id)
                 next_depth = depth + 1
                 if next_depth == level:
-                    entity = lookup.get(member_id)
+                    entity = cache.get(member_id)
                     if entity is not None:
                         at_depth.append(entity)
                 elif next_depth < level:

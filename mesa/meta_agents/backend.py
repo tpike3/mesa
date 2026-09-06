@@ -131,6 +131,25 @@ class MembershipBackend:
             if linked_group == group_id
         }
 
+    def triplets_for(
+        self, entity_id: Hashable, relation: RelationKey | None = None
+    ) -> set[Triplet]:
+        """Return triplets where *entity_id* is agent or group, using indexes."""
+        result: set[Triplet] = set()
+        # entity as agent (member of groups)
+        for group_id, rel in self._by_agent.get(entity_id, set()):
+            if relation is None or rel == relation:
+                result.add((entity_id, group_id, rel))
+        # entity as group (has members)
+        for group_id, rel in self._by_group.get(entity_id, set()):
+            if relation is None or rel == relation:
+                result.add((group_id, entity_id, rel))
+        return result
+
+    def all_entity_ids(self) -> set[Hashable]:
+        """Return every entity id known to the backend (agents and groups)."""
+        return set(self._by_agent.keys()) | set(self._by_group.keys())
+
     def as_triplets(self) -> set[Triplet]:
         """Return all memberships as canonical triplets."""
         return set(self._triplets)
