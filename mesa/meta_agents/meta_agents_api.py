@@ -124,12 +124,7 @@ class MetaAgents:
                     break
 
     def _resolve_id(self, entity_id: Hashable) -> Any:
-        """Look up a cached entity, falling back to a model scan on miss.
-
-        On a cache miss the model agents are scanned for the specific id.
-        The result is cached so subsequent lookups are O(1).
-        Returns the raw *entity_id* when no live object is found.
-        """
+        """Look up a cached entity, falling back to a model.agents scan on miss."""
         self._ensure_cache()
         hit = self._id_to_entity.get(entity_id)
         if hit is not None:
@@ -143,11 +138,11 @@ class MetaAgents:
         return entity_id
 
     def _resolve_entity(self, entity_id: Hashable) -> Any:
-        """Resolve a backend id back to a live object when possible."""
+        """Resolve a backend id back to an agent when possible."""
         return self._resolve_id(entity_id)
 
     def _resolve_group(self, group: Hashable) -> Any:
-        """Resolve a group from a live object, unique id, or group name."""
+        """Resolve a group from an agent object, unique id, or group name."""
         self._ensure_cache()
         entity_id = self._entity_id(group)
         if entity_id in self._id_to_entity:
