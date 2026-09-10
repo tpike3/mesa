@@ -138,7 +138,8 @@ class MetaAgents:
                 return entity
         warnings.warn(
             f"Entity with id {entity_id!r} not found among model agents. "
-            f"Returning the raw id as a fallback.",
+            f"Entity reference not found in model agents."
+            f"Please pass valid Agent objects or IDs.",
             UserWarning,
             stacklevel=2,
         )
