@@ -196,4 +196,3 @@ def test_all_entity_ids_after_removal():
     assert "g1" not in ids
     # a2 was only linked to g1, so after removing g1 its entry is also gone
     assert "a2" not in ids
-
