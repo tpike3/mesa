@@ -1,5 +1,7 @@
 """Tests for the meta-agents membership manager."""
 
+import warnings
+
 import pytest
 
 from mesa import Agent, Model
@@ -494,13 +496,11 @@ def test_resolve_id_fallback_scan_populates_cache():
 
 def test_resolve_id_warns_on_missing_entity():
     """_resolve_id emits a UserWarning when the entity id is not found."""
-    import warnings as _warnings
-
     model = Model()
     meta_agents = MetaAgents(model)
 
-    with _warnings.catch_warnings(record=True) as caught:
-        _warnings.simplefilter("always")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         result = meta_agents._resolve_id("nonexistent_id")
 
     assert result == "nonexistent_id"
@@ -512,14 +512,12 @@ def test_resolve_id_warns_on_missing_entity():
 
 def test_resolve_id_no_warning_when_entity_found():
     """_resolve_id does NOT warn when the entity exists in the model."""
-    import warnings as _warnings
-
     model = Model()
     meta_agents = MetaAgents(model)
     agent = Agent(model)
 
-    with _warnings.catch_warnings(record=True) as caught:
-        _warnings.simplefilter("always")
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         result = meta_agents._resolve_id(agent.unique_id)
 
     assert result is agent
