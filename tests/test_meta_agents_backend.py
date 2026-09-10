@@ -108,3 +108,92 @@ def test_backend_uses_unique_ids_for_mesa_agents():
     assert meta_agents.backend.groups_of(agent) == {group.unique_id}
     assert meta_agents.backend.agents_of(group) == {agent.unique_id}
     meta_agents.backend.assert_invariants()
+
+
+def test_triplets_for_entity_as_agent():
+    """triplets_for returns edges where the entity is the agent (member)."""
+    backend = MembershipBackend()
+    backend.add_membership("a1", "g1", "member")
+    backend.add_membership("a1", "g2", "leader")
+    backend.add_membership("a2", "g1", "member")
+
+    result = backend.triplets_for("a1")
+    assert result == {("a1", "g1", "member"), ("a1", "g2", "leader")}
+
+
+def test_triplets_for_entity_as_group():
+    """triplets_for returns edges where the entity is the group."""
+    backend = MembershipBackend()
+    backend.add_membership("a1", "g1", "member")
+    backend.add_membership("a2", "g1", "leader")
+
+    result = backend.triplets_for("g1")
+    assert result == {("a1", "g1", "member"), ("a2", "g1", "leader")}
+
+
+def test_triplets_for_entity_as_both_agent_and_group():
+    """triplets_for returns edges from both sides when entity is agent AND group."""
+    backend = MembershipBackend()
+    backend.add_membership("a1", "mid", "member")
+    backend.add_membership("mid", "g1", "member")
+
+    result = backend.triplets_for("mid")
+    # mid is an agent of g1 and a group containing a1
+    assert result == {("mid", "g1", "member"), ("a1", "mid", "member")}
+
+
+def test_triplets_for_with_relation_filter():
+    """triplets_for filters by relation when specified."""
+    backend = MembershipBackend()
+    backend.add_membership("a1", "g1", "member")
+    backend.add_membership("a1", "g1", "leader")
+    backend.add_membership("a2", "g1", "member")
+
+    result = backend.triplets_for("a1", relation="leader")
+    assert result == {("a1", "g1", "leader")}
+
+    result_group = backend.triplets_for("g1", relation="member")
+    assert result_group == {("a1", "g1", "member"), ("a2", "g1", "member")}
+
+
+def test_triplets_for_unknown_entity():
+    """triplets_for returns an empty set for an entity with no edges."""
+    backend = MembershipBackend()
+    backend.add_membership("a1", "g1", "member")
+
+    assert backend.triplets_for("unknown") == set()
+
+
+def test_all_entity_ids_populated():
+    """all_entity_ids returns every agent and group id in the backend."""
+    backend = MembershipBackend()
+    backend.add_membership("a1", "g1", "member")
+    backend.add_membership("a2", "g2", "leader")
+
+    assert backend.all_entity_ids() == {"a1", "a2", "g1", "g2"}
+
+
+def test_all_entity_ids_empty():
+    """all_entity_ids returns an empty set when backend has no edges."""
+    backend = MembershipBackend()
+    assert backend.all_entity_ids() == set()
+
+
+def test_all_entity_ids_after_removal():
+    """all_entity_ids shrinks when agents/groups are removed."""
+    backend = MembershipBackend()
+    backend.add_membership("a1", "g1", "member")
+    backend.add_membership("a2", "g1", "leader")
+
+    backend.remove_agent("a1")
+    ids = backend.all_entity_ids()
+    assert "a1" not in ids
+    assert "a2" in ids
+    assert "g1" in ids
+
+    backend.remove_group("g1")
+    ids = backend.all_entity_ids()
+    assert "g1" not in ids
+    # a2 was only linked to g1, so after removing g1 its entry is also gone
+    assert "a2" not in ids
+

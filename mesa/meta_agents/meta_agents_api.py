@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import warnings
 from collections import deque
 from collections.abc import Callable, Hashable, Iterable
 from dataclasses import dataclass
@@ -135,6 +136,12 @@ class MetaAgents:
             if eid == entity_id:
                 self._id_to_entity[eid] = entity
                 return entity
+        warnings.warn(
+            f"Entity with id {entity_id!r} not found among model agents. "
+            f"Returning the raw id as a fallback.",
+            UserWarning,
+            stacklevel=2,
+        )
         return entity_id
 
     def _resolve_entity(self, entity_id: Hashable) -> Any:

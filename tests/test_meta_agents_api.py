@@ -379,3 +379,149 @@ def test_at_level_cyclic_membership_terminates():
     assert set(meta_agents.at_level(0, root=a)) == {a}
     assert set(meta_agents.at_level(1, root=a)) == {b}
     assert set(meta_agents.at_level(2, root=a)) == set()
+
+
+# ── _cache_entity tests ────────────────────────────────────────────────
+
+
+def test_cache_entity_stores_agent_by_unique_id():
+    """_cache_entity stores a live agent under its unique_id."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+    agent = Agent(model)
+
+    meta_agents._cache_entity(agent)
+
+    assert meta_agents._id_to_entity[agent.unique_id] is agent
+
+
+def test_cache_entity_skips_entity_without_unique_id():
+    """_cache_entity silently ignores entities with no unique_id attribute."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+
+    plain = object()  # no unique_id attribute
+    meta_agents._cache_entity(plain)
+
+    assert plain not in meta_agents._id_to_entity.values()
+
+
+def test_cache_entity_overwrites_stale_entry():
+    """A second _cache_entity call with the same unique_id replaces the old reference."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+    agent = Agent(model)
+    uid = agent.unique_id
+
+    meta_agents._cache_entity(agent)
+    assert meta_agents._id_to_entity[uid] is agent
+
+    # Simulate a replacement agent with the same unique_id
+    class FakeAgent:
+        unique_id = uid
+
+    replacement = FakeAgent()
+    meta_agents._cache_entity(replacement)
+    assert meta_agents._id_to_entity[uid] is replacement
+
+
+# ── _ensure_cache tests ────────────────────────────────────────────────
+
+
+def test_ensure_cache_seeds_from_backend():
+    """_ensure_cache populates the cache from backend entity ids on first call."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+    a = Agent(model)
+    b = Agent(model)
+    group = meta_agents.create("Group", [a, b])
+
+    # Clear the cache to simulate cold start with pre-existing backend state.
+    meta_agents._id_to_entity.clear()
+    meta_agents._cache_seeded = False
+
+    meta_agents._ensure_cache()
+
+    assert meta_agents._cache_seeded is True
+    assert meta_agents._id_to_entity[a.unique_id] is a
+    assert meta_agents._id_to_entity[b.unique_id] is b
+    assert meta_agents._id_to_entity[group.unique_id] is group
+
+
+def test_ensure_cache_runs_only_once():
+    """_ensure_cache skips re-scanning after the first seed."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+    Agent(model)
+
+    meta_agents._ensure_cache()
+    assert meta_agents._cache_seeded is True
+
+    # Manually inject a sentinel to prove the scan doesn't re-run.
+    meta_agents._id_to_entity["sentinel"] = "marker"
+    meta_agents._ensure_cache()
+    assert meta_agents._id_to_entity["sentinel"] == "marker"
+
+
+# ── _resolve_id cache integration tests ────────────────────────────────
+
+
+def test_resolve_id_uses_cache():
+    """_resolve_id returns a cached entity without scanning model.agents."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+    agent = Agent(model)
+    meta_agents._cache_entity(agent)
+
+    result = meta_agents._resolve_id(agent.unique_id)
+    assert result is agent
+
+
+def test_resolve_id_fallback_scan_populates_cache():
+    """_resolve_id scans model.agents on cache miss and stores the result."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+    agent = Agent(model)
+
+    # Ensure cache is seeded but doesn't contain the agent.
+    meta_agents._cache_seeded = True
+    assert agent.unique_id not in meta_agents._id_to_entity
+
+    result = meta_agents._resolve_id(agent.unique_id)
+    assert result is agent
+    assert meta_agents._id_to_entity[agent.unique_id] is agent
+
+
+def test_resolve_id_warns_on_missing_entity():
+    """_resolve_id emits a UserWarning when the entity id is not found."""
+    import warnings as _warnings
+
+    model = Model()
+    meta_agents = MetaAgents(model)
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        result = meta_agents._resolve_id("nonexistent_id")
+
+    assert result == "nonexistent_id"
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, UserWarning)
+    assert "nonexistent_id" in str(caught[0].message)
+    assert "not found" in str(caught[0].message)
+
+
+def test_resolve_id_no_warning_when_entity_found():
+    """_resolve_id does NOT warn when the entity exists in the model."""
+    import warnings as _warnings
+
+    model = Model()
+    meta_agents = MetaAgents(model)
+    agent = Agent(model)
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter("always")
+        result = meta_agents._resolve_id(agent.unique_id)
+
+    assert result is agent
+    assert len(caught) == 0
+
