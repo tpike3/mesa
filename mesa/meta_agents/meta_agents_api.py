@@ -136,13 +136,13 @@ class MetaAgents:
             if eid == entity_id:
                 self._id_to_entity[eid] = entity
                 return entity
-        warnings.warn(
-            f"Entity with id {entity_id!r} not found among model agents. "
-            f"Entity reference not found in model agents."
-            f"Please pass valid Agent objects or IDs.",
-            UserWarning,
-            stacklevel=2,
-        )
+        if entity_id in self.backend.all_entity_ids():
+            warnings.warn(
+                f"Entity with id {entity_id!r} not found among model agents. "
+                f"Please pass valid Agent objects or IDs.",
+                UserWarning,
+                stacklevel=2,
+            )
         return entity_id
 
     def _resolve_entity(self, entity_id: Hashable) -> Any:

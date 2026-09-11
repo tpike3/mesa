@@ -494,20 +494,38 @@ def test_resolve_id_fallback_scan_populates_cache():
     assert meta_agents._id_to_entity[agent.unique_id] is agent
 
 
-def test_resolve_id_warns_on_missing_entity():
-    """_resolve_id emits a UserWarning when the entity id is not found."""
+def test_resolve_id_warns_on_stale_backend_reference():
+    """_resolve_id emits a UserWarning for an id known to the backend but not in the model."""
+    model = Model()
+    meta_agents = MetaAgents(model)
+    agent = Agent(model)
+    group = meta_agents.create("Group", [agent])
+
+    # Inject a backend edge referencing an id with no live model agent.
+    meta_agents.backend.add_membership("ghost_id", group.unique_id, "member")
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = meta_agents._resolve_id("ghost_id")
+
+    assert result == "ghost_id"
+    assert len(caught) == 1
+    assert issubclass(caught[0].category, UserWarning)
+    assert "ghost_id" in str(caught[0].message)
+    assert "not found" in str(caught[0].message)
+
+
+def test_resolve_id_no_warning_for_unknown_id():
+    """_resolve_id does NOT warn for an id unknown to the backend."""
     model = Model()
     meta_agents = MetaAgents(model)
 
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
-        result = meta_agents._resolve_id("nonexistent_id")
+        result = meta_agents._resolve_id("totally_unknown")
 
-    assert result == "nonexistent_id"
-    assert len(caught) == 1
-    assert issubclass(caught[0].category, UserWarning)
-    assert "nonexistent_id" in str(caught[0].message)
-    assert "not found" in str(caught[0].message)
+    assert result == "totally_unknown"
+    assert len(caught) == 0
 
 
 def test_resolve_id_no_warning_when_entity_found():
@@ -522,3 +540,4 @@ def test_resolve_id_no_warning_when_entity_found():
 
     assert result is agent
     assert len(caught) == 0
+
