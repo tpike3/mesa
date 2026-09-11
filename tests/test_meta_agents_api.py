@@ -540,4 +540,3 @@ def test_resolve_id_no_warning_when_entity_found():
 
     assert result is agent
     assert len(caught) == 0
-
